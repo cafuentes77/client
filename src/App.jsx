@@ -6,6 +6,7 @@ import axios from "axios";
 import { useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
 import api from "./utils/api";
+import LoadingSpinner from "./components/LoadingSpinner.jsx";
 
 // Componente protegido (debe estar FUERA de App)
 const ProtectedRoute = ({ children }) => {
@@ -39,6 +40,11 @@ const Dashboard = () => {
   const [confirmacionId, setConfirmacionId] = useState(null);
   const [busqueda, setBusqueda] = useState("");
 
+  const [loadingCrear, setLoadingCrear] = useState(false);
+  const [loadingEditar, setLoadingEditar] = useState(false);
+  const [loadingEliminar, setLoadingEliminar] = useState(false);
+  const [loadingCerrar, setLoadingCerrar] = useState(false);
+
   // Función para formatear RUT
   const formatearRut = (rut) => {
     if (!rut) return "";
@@ -70,8 +76,8 @@ const Dashboard = () => {
       dvCalculado === 11
         ? "0"
         : dvCalculado === 10
-        ? "K"
-        : dvCalculado.toString();
+          ? "K"
+          : dvCalculado.toString();
     return dv === dvEsperado;
   };
 
@@ -159,6 +165,7 @@ const Dashboard = () => {
   };
 
   const eliminarVisita = async () => {
+    setLoadingEliminar(true);
     try {
       await api.delete(`/visitas/${confirmacionId}`);
       enqueueSnackbar("Visita eliminada con éxito", { variant: "success" });
@@ -169,19 +176,24 @@ const Dashboard = () => {
       enqueueSnackbar(`${error.response?.data?.error || "Error al eliminar"}`, {
         variant: "error",
       });
+      setConfirmacionId(null);
+    } finally {
+      setLoadingEliminar(false);
     }
   };
 
   const cerrarVisita = async (id) => {
+    setLoadingCerrar(true);
     try {
       await api.post(`/visitas/${id}/cerrar`);
       enqueueSnackbar("Visita cerrada con éxito", { variant: "success" });
       fetchVisitas();
     } catch (error) {
       console.error("Error al cerrar visita:", error);
-      enqueueSnackbar(`${error.response?.data?.error || "Error al cerrar"}`, {
-        variant: "error",
-      });
+      const msg = error.response?.data?.error || "Error al cerrar la visita";
+      enqueueSnackbar(`❌ ${msg}`, { variant: "error" });
+    } finally {
+      setLoadingCerrar(false);
     }
   };
 
@@ -193,16 +205,8 @@ const Dashboard = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("rutEmpresa", form.rutEmpresa);
-    formData.append("nombreEmpresa", form.nombreEmpresa);
-    formData.append("tipoVisita", form.tipoVisita);
-    formData.append("comentario", form.comentario);
-    formData.append("folios", form.folio || "");
-    formData.append("folioEditado", form.folioEditado);
-
     const emailsValidos = form.emailsNotificacion.filter(
-      (email) => email.trim() !== ""
+      (email) => email.trim() !== "",
     );
     if (emailsValidos.length > 5) {
       enqueueSnackbar("❌ No puedes añadir más de 5 correos", {
@@ -210,6 +214,14 @@ const Dashboard = () => {
       });
       return;
     }
+
+    const formData = new FormData();
+    formData.append("rutEmpresa", form.rutEmpresa);
+    formData.append("nombreEmpresa", form.nombreEmpresa);
+    formData.append("tipoVisita", form.tipoVisita);
+    formData.append("comentario", form.comentario);
+    formData.append("folios", form.folio || "");
+    formData.append("folioEditado", form.folioEditado);
     formData.append("emailsNotificacion", JSON.stringify(emailsValidos));
 
     if (form.fotosSeleccionadas.length > 0) {
@@ -218,21 +230,35 @@ const Dashboard = () => {
       });
     }
 
+    // 👇 ACTIVAR SPINNER
+    const isEditing = !!editId;
+    const setLoading = isEditing ? setLoadingEditar : setLoadingCrear;
+    setLoading(true);
+
     try {
+      let response;
       if (editId) {
-        await api.put(`/visitas/${editId}`, formData, {
+        response = await api.put(`/visitas/${editId}`, formData, {
           headers: { "Content-Type": "multipart/form-data" },
         });
         enqueueSnackbar("Visita actualizada con éxito", {
-          variant: "warning",
+          variant: "success",
         });
         setEditId(null);
       } else {
-        await api.post("visitas", formData, {
+        response = await api.post("visitas", formData, {
           headers: { "Content-Type": "multipart/form-data" },
         });
         enqueueSnackbar("Visita creada con éxito", { variant: "success" });
       }
+
+      // 👇 Actualizar estado con las fotos reales del backend
+      const visitaGuardada = response.data;
+      setForm((prev) => ({
+        ...prev,
+        fotosExistentes: visitaGuardada.fotos || [],
+        fotosSeleccionadas: [],
+      }));
 
       fetchVisitas();
       resetForm();
@@ -243,6 +269,8 @@ const Dashboard = () => {
         error.response?.data?.error ||
         "No se pudo guardar la visita. Verifica los datos o los archivos subidos.";
       enqueueSnackbar(`${mensaje}`, { variant: "error" });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -253,39 +281,77 @@ const Dashboard = () => {
   }, [user]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-          {/* Logo + Título */}
-          <div className="flex items-center space-x-6">
-            <img
-              src="/segurpro.jpg" // 👈 Ruta a tu logo
-              alt="Logo de la empresa"
-              className="h-10 w-auto" // Ajusta la altura aquí (h-10 = 2.5rem ≈ 40px)
-            />
-            <h1 className="text-xl font-bold text-gray-800">
-              Gestión de Visitas Técnicas
-            </h1>
+    <div className="min-h-screen bg-gradient-to-br from-blue-900 to-gray-500">
+      <header className="bg-white shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          {/* Desktop layout */}
+          <div className="hidden md:flex justify-between items-center">
+            {/* Logo + Título */}
+            <div className="flex items-center space-x-6">
+              <img
+                src="/segurpro.jpg"
+                alt="Logo de la empresa"
+                className="h-10 w-auto"
+              />
+              <h1 className="text-xl font-bold text-gray-800">
+                Gestión de Visitas Técnicas
+              </h1>
+            </div>
+
+            {/* Saludo + Logout */}
+            <div className="flex items-center gap-4">
+              <span className="text-gray-700">
+                Hola, {user?.nombre} (
+                {user?.rol === "administrador" ? "Admin" : "Técnico"})
+              </span>
+              <button
+                onClick={logout}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
+              >
+                Cerrar sesión
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-gray-700">
-              Hola, {user?.nombre} (
-              {user?.rol === "administrador" ? "Admin" : "Técnico"})
-            </span>
-            <button
-              onClick={logout}
-              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
-            >
-              Cerrar sesión
-            </button>
+
+          {/* Mobile layout */}
+          <div className="md:hidden space-y-4">
+            {/* Logo + Título centrado */}
+            <div className="flex flex-col items-center space-y-2">
+              <div className="flex items-center space-x-3">
+                <img
+                  src="/segurpro.jpg"
+                  alt="Logo de la empresa"
+                  className="h-8 w-auto"
+                />
+                <h1 className="text-lg font-bold text-gray-800 text-center">
+                  Gestión de Visitas Técnicas
+                </h1>
+              </div>
+
+              {/* Saludo centrado */}
+              <span className="text-gray-700 text-center block">
+                Hola, {user?.nombre} (
+                {user?.rol === "administrador" ? "Admin" : "Técnico"})
+              </span>
+            </div>
+
+            {/* Botón de logout centrado */}
+            <div className="flex justify-center">
+              <button
+                onClick={logout}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition w-full max-w-xs"
+              >
+                Cerrar sesión
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-4">
+      <main className="min-h-[calc(100vh-64px)] bg-gradient-to-br from-blue-900 to-gray-500 p-4 sm:p-6">
         <form
           onSubmit={handleSubmit}
-          className="bg-white p-6 rounded-lg shadow mb-8"
+          className="bg-gradient-to-br from-blue-200 to-indigo-100 p-6 rounded-lg shadow mb-8"
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
@@ -304,7 +370,7 @@ const Dashboard = () => {
                   }
                 }}
                 placeholder="50.345.678-9"
-                className={`w-full p-2 border rounded ${
+                className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition ${
                   rutError ? "border-red-500" : "border-gray-300"
                 }`}
                 required
@@ -323,7 +389,7 @@ const Dashboard = () => {
                   setForm({ ...form, nombreEmpresa: e.target.value })
                 }
                 placeholder="Nombre de la empresa"
-                className="w-full p-2 border border-gray-300 rounded"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                 required
               />
             </div>
@@ -336,7 +402,7 @@ const Dashboard = () => {
                 onChange={(e) =>
                   setForm({ ...form, tipoVisita: e.target.value })
                 }
-                className="w-full p-2 border border-gray-300 rounded"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none"
                 required
               >
                 <option value="visita_tecnica">Visita técnica</option>
@@ -362,14 +428,14 @@ const Dashboard = () => {
                       setForm({ ...form, emailsNotificacion: newEmails });
                     }}
                     placeholder="correo@ejemplo.com"
-                    className="w-full p-2 border border-gray-300 rounded"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                   />
                   {form.emailsNotificacion.length > 1 && (
                     <button
                       type="button"
                       onClick={() => {
                         const newEmails = form.emailsNotificacion.filter(
-                          (_, i) => i !== index
+                          (_, i) => i !== index,
                         );
                         setForm({ ...form, emailsNotificacion: newEmails });
                       }}
@@ -410,7 +476,7 @@ const Dashboard = () => {
               value={form.comentario}
               onChange={(e) => setForm({ ...form, comentario: e.target.value })}
               placeholder="Descripción de la visita"
-              className="w-full p-2 border border-gray-300 rounded"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
               rows="3"
               required
             />
@@ -441,7 +507,7 @@ const Dashboard = () => {
                   return { ...prev, fotosSeleccionadas: updated };
                 });
               }}
-              className="w-full p-2 border border-gray-300 rounded"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
             />
 
             {/* Vista previa: fotos existentes + nuevas */}
@@ -479,7 +545,7 @@ const Dashboard = () => {
                       setForm((prev) => ({
                         ...prev,
                         fotosSeleccionadas: prev.fotosSeleccionadas.filter(
-                          (_, i) => i !== index
+                          (_, i) => i !== index,
                         ),
                       }));
                     }}
@@ -505,7 +571,7 @@ const Dashboard = () => {
           placeholder="Buscar por folio, empresa, RUT, tipo o fecha..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          className="w-full p-2 border border-gray-300 rounded mb-6 focus:ring-blue-500 focus:border-blue-500"
+          className="mb-6 w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
         />
 
         <div className="space-y-4">
@@ -522,7 +588,7 @@ const Dashboard = () => {
                 .includes(termino);
               const rutLimpio = (visita.rutEmpresa || "").replace(/[.-]/g, "");
               const coincideRut = rutLimpio.includes(
-                termino.replace(/[.-]/g, "")
+                termino.replace(/[.-]/g, ""),
               );
               const tipoTexto =
                 {
@@ -533,7 +599,7 @@ const Dashboard = () => {
               const coincideTipo = tipoTexto.includes(termino);
               const fechaCreada = formatearFechaParaBusqueda(visita.createdAt);
               const fechaActualizada = formatearFechaParaBusqueda(
-                visita.updatedAt
+                visita.updatedAt,
               );
               const coincideFecha =
                 fechaCreada.includes(termino) ||
@@ -556,54 +622,86 @@ const Dashboard = () => {
               return (
                 <div
                   key={v._id}
-                  className="bg-white p-4 rounded-lg shadow border border-gray-200"
+                  className="bg-gradient-to-br from-blue-200 to-indigo-100 rounded-xl shadow-sm border border-gray-200 p-5 hover:shadow-md transition-all duration-200"
                 >
-                  <p className="text-sm text-gray-600 mb-2">
-                    <strong>Folio:</strong> {v.folio}
-                    {v.folioEditado && (
-                      <span className="ml-2 text-xs text-blue-600">
-                        (editado)
-                      </span>
-                    )}
-                  </p>
-                  <h3 className="text-xl font-semibold text-gray-800">
-                    {v.nombreEmpresa}
-                  </h3>
-                  <p className="text-sm text-gray-600 mt-1">
-                    <strong>RUT:</strong> {formatearRut(v.rutEmpresa)}
-                  </p>
-                  <span className={getTipoVisitaBadgeClass(v.tipoVisita)}>
-                    {getTipoVisitaLabel(v.tipoVisita)}
-                  </span>
-                  <p className="mt-2 text-gray-700">{v.comentario}</p>
-                  <div className="mt-2 text-sm text-gray-600 space-y-1">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 mb-4">
+                    <div className="flex-1 min-w-0">
+                      <p className=" text-gray-600 text-sm mt-1">
+                        <span className="font-medium">Folio:</span> {v.folio}
+                        {v.folioEditado && (
+                          <span className="ml-2 text-xs text-blue-600">
+                            (editado)
+                          </span>
+                        )}
+                      </p>
+                      <h3 className="font-bold text-gray-900 text-lg truncate">
+                        {v.nombreEmpresa}
+                      </h3>
+                      <p className="text-gray-600 text-sm">
+                        <span className="font-medium">RUT:</span>{" "}
+                        {formatearRut(v.rutEmpresa)}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Tipo de visita con tu función existente */}
+                  <div className="mb-3">
+                    <span className={getTipoVisitaBadgeClass(v.tipoVisita)}>
+                      {getTipoVisitaLabel(v.tipoVisita)}
+                    </span>
+                  </div>
+                  {/* Comentario mejorado */}
+                  <div className="mb-4">
+                    <p className="text-gray-700">
+                      <span className="font-medium">Comentario:</span>
+                    </p>
+                    <p className="text-gray-600 mt-1 from-blue-200 to-indigo-100 p-2 rounded-lg text-sm">
+                      {v.comentario || "Sin comentario"}
+                    </p>
+                  </div>
+                  {/* Fotos miniatura mejoradas */}
+                  {fotos.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-gray-700 font-medium mb-2">
+                        Fotos ({fotos.length})
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {fotos.slice(0, 3).map((foto, index) => (
+                          <div key={index} className="relative">
+                            <img
+                              src={foto}
+                              alt={`Foto ${index + 1}`}
+                              className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                              onError={(e) => {
+                                e.target.src =
+                                  "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIGZpbGw9IiNmNWY1ZjUiLz4KICA8Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIxMCIgZmlsbD0iI2RkZGRkZCIvPgogIDxwYXRoIGQ9Ik0yNyAzMiBMNDEgNDYgTTQxIDMyIEwyNyA0NiIgc3Ryb2tlPSIjYmNiY2JjIiBzdHJva2Utd2lkdGg9IjIiLz4KPC9zdmc+";
+                              }}
+                            />
+                          </div>
+                        ))}
+                        {fotos.length > 3 && (
+                          <div className="w-16 h-16 bg-gray-100 rounded-lg border border-gray-200 flex items-center justify-center">
+                            <span className="text-gray-500 text-xs font-medium">
+                              +{fotos.length - 3}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fechas mejoradas */}
+                  <div className="text-gray-500 text-xs mb-4 space-y-1">
                     <p>
-                      <strong>Creada:</strong>{" "}
-                      {new Date(v.createdAt).toLocaleString("es-ES")}
+                      Creada:{" "}
+                      {new Date(v.createdAt).toLocaleDateString("es-ES")}
                     </p>
                     {v.createdAt !== v.updatedAt && (
                       <p>
-                        <strong>Actualizada:</strong>{" "}
-                        {new Date(v.updatedAt).toLocaleString("es-ES")}
+                        Actualizada:{" "}
+                        {new Date(v.updatedAt).toLocaleDateString("es-ES")}
                       </p>
                     )}
                   </div>
-                  {fotos.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {fotos.map((foto, i) => (
-                        <img
-                          key={i}
-                          src={foto}
-                          alt="Visita"
-                          className="w-20 h-20 object-cover rounded border"
-                          onError={(e) => {
-                            e.target.src =
-                              "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHZpZXdCb3g9IjAgMCA4MCA4MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iODAiIGhlaWdodD0iODAiIGZpbGw9IiNmMmYyZjIiLz4KICA8Y2lyY2xlIGN4PSI0MCIgY3k9IjQwIiByPSIxMiIgZmlsbD0iI2Q4ZDhkOCIvPgogIDxwYXRoIGQ9Ik0zNSAzNSBMNDUgNDUgTTQ1IDM1IEwzNSA0NSIgc3Ryb2tlPSIjYmNiY2JjIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8dGV4dCB4PSI0MCIgeT0iNzAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMCIgZmlsbD0iIzg4ODg4OCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U2luIGltYWdlPC90ZXh0Pgo8L3N2Zz4=";
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
 
                   {/* ✅ Botones con roles */}
                   <div className="flex gap-2 mt-3">
@@ -643,18 +741,20 @@ const Dashboard = () => {
 
         {confirmacionId && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg">
-              <p>¿Estás seguro de que deseas eliminar esta visita?</p>
-              <div className="mt-4 flex gap-3">
+            <div className="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full mx-4">
+              <p className="mb-6 text-center">
+                ¿Estás seguro de eliminar esta visita?
+              </p>
+              <div className="flex justify-center gap-3">
                 <button
                   onClick={() => setConfirmacionId(null)}
-                  className="px-4 py-2 bg-gray-300 rounded"
+                  className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400 transition"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={eliminarVisita}
-                  className="px-4 py-2 bg-red-600 text-white rounded"
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
                 >
                   Eliminar
                 </button>
@@ -662,6 +762,11 @@ const Dashboard = () => {
             </div>
           </div>
         )}
+
+        {loadingCrear && <LoadingSpinner message="Creando visita..." />}
+        {loadingEditar && <LoadingSpinner message="Actualizando visita..." />}
+        {loadingEliminar && <LoadingSpinner message="Eliminando visita..." />}
+        {loadingCerrar && <LoadingSpinner message="Cerrando visita..." />}
       </main>
     </div>
   );
